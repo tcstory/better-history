@@ -1,3 +1,5 @@
+const CopyWebpackPlugin = require('copy-webpack-plugin')
+
 // Configuration for your app
 // https://quasar.dev/quasar-cli/quasar-conf-js
 
@@ -76,6 +78,20 @@ module.exports = function (ctx) {
           }
         })
 
+        cfg.plugins.push(
+          new CopyWebpackPlugin([{
+            from: 'src/manifest.json',
+            transform: function (content, path) {
+              // generates the manifest file using the package.json informations
+              return Buffer.from(JSON.stringify({
+                description: process.env.npm_package_description,
+                version: process.env.npm_package_version,
+                ...JSON.parse(content.toString())
+              }))
+            }
+          }])
+        )
+
         if (ctx.dev) {
           cfg.devtool = 'cheap-module-source-map'
         }
@@ -147,7 +163,6 @@ module.exports = function (ctx) {
       // noIosLegacyBuildFlag: true, // uncomment only if you know what you are doing
       id: 'org.cordova.quasar.app'
     },
-
 
     // Full list of options: https://quasar.dev/quasar-cli/developing-capacitor-apps/configuring-capacitor
     capacitor: {

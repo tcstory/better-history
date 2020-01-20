@@ -38,12 +38,12 @@ export interface RemoveInfoType {
   urls: string[];
 }
 
-class HistoryStore {
+export default class HistoryStore {
   search(query: QueryType): Promise<HistoryItemType[]> {
     return browser.history.search(query);
   }
 
-  getPageVisits(query: QueryType): Promise<HistoryItemType[]> {
+  getPageVisits(query: QueryType): Promise<PageVisitItemType[]> {
     return browser.history.search(query).then(function (results) {
       const p = [] as Promise<any>[];
 
@@ -113,7 +113,6 @@ class HistoryStore {
     }));
   }
 
-  // eslint-disable-next-line @typescript-eslint/explicit-member-accessibility
   deleteVisits(query: number[]) {
     return Promise.all(query.map(function (timestamp) {
       return browser.history.deleteRange({
@@ -124,4 +123,3 @@ class HistoryStore {
   }
 }
 
-export const historyStore = new HistoryStore();

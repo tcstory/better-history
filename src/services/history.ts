@@ -44,7 +44,9 @@ export default class HistoryStore {
   }
 
   getPageVisits(query: QueryType): Promise<PageVisitItemType[]> {
+    console.log('getPageVisits', query)
     return browser.history.search(query).then(function (results) {
+      console.log('raw results', results)
       const p = [] as Promise<any>[];
 
       for (const historyItem of results) {
@@ -115,6 +117,8 @@ export default class HistoryStore {
 
   deleteVisits(query: number[]) {
     return Promise.all(query.map(function (timestamp) {
+      // using deleteRange to delete single visit is not a good idea, but I cant find another way to do it.
+      // it will cause a bug if there are two items have the same value of lastVisitTime
       return browser.history.deleteRange({
         startTime: timestamp,
         endTime: timestamp + 1

@@ -4,6 +4,18 @@ const CopyWebpackPlugin = require('copy-webpack-plugin')
 // https://quasar.dev/quasar-cli/quasar-conf-js
 
 module.exports = function (ctx) {
+  let vendorFiles = [];
+
+  if (ctx.dev) {
+    vendorFiles=  [
+      {from: './node_modules/webextension-polyfill/dist/browser-polyfill.js', to: './vendor/browser-polyfill.js'},
+    ]
+  } else {
+    vendorFiles =  [
+      {from: './node_modules/webextension-polyfill/dist/browser-polyfill.min.js', to: './vendor/browser-polyfill.js'},
+    ]
+  }
+
   return {
     // app boot file (/src/boot)
     // --> boot files are part of "main.js"
@@ -89,7 +101,8 @@ module.exports = function (ctx) {
                 ...JSON.parse(content.toString())
               }))
             }
-          }])
+          }]),
+          new CopyWebpackPlugin(vendorFiles),
         )
 
         if (ctx.dev) {

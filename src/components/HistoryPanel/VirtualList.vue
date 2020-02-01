@@ -52,14 +52,9 @@ function createHistoryItemDom(item) {
 }
 
 class HistoryDOM {
-  constructor(el, id) {
+  constructor(el, idx) {
     this.el = el;
-    this.id = id;
-    this.style = {
-      offsetTop: -1,
-      offsetHeight: -1,
-      translateY: -1,
-    };
+    this.idx = idx;
     this.isInViewport = false;
   }
 
@@ -80,28 +75,146 @@ class Scroller {
     this.innerEl= null;
     this.innerElHeight= 0;
     this.domList= [];
-    this.unusedDomList= [];
     this.scrollEvent$= new Subject();
-    this.headDomIdx = -1;
-    this.tailDomIdx = -1;
     this.direction = -1;
     this.scrollTop = 0;
+    this.itemList = [];
+    this.reservedItems = 4;
+    this.needMoreItems = this.reservedItems * 2;
   }
 
   init(listWrapperEl) {
+    if ('scrollRestoration' in history) {
+      // Back off, browser, I got this...
+      history.scrollRestoration = 'manual';
+    }
+
     this.listWrapperEl = listWrapperEl;
     this.listWrapperElInitTop = listWrapperEl.getBoundingClientRect().top;
-    // this.viewportHeight =
-    //   document.documentElement.clientHeight -
-    //   this.listWrapperElTop -
-    //   parseFloat(window.getComputedStyle(this.listWrapperEl).marginBottom);
     this.viewportHeight = document.documentElement.clientHeight;
     this.innerEl = this.listWrapperEl.querySelector('.inner');
+
+    this.onScroll();
+    this.listenToScroll();
+  }
+
+  setData(itemList) {
+    this.itemList = itemList.map(function (item,idx) {
+      return {
+        ...item,
+        title: `${item.title}---${idx}`,
+        style: {
+          offsetTop: -1,
+          offsetHeight: -1,
+          translateY: -1,
+        }
+      }
+    });
+  }
+
+  listenToScroll() {
+    this.scrollEvent$.pipe(
+      throttleTime(30),
+      map(function () {
+        return document.documentElement.scrollTop;
+      }),
+      scan(function (acc, curr) {
+        acc.direction = curr > acc.prev ? DOWN : UP;
+        acc.prev = curr;
+
+        return acc;
+      }, {
+        prev: 0,
+        direction: -1,
+      })
+    ).subscribe( (val) => {
+      this.direction = val.direction;
+      this.scrollTop = val.prev;
+
+      for (let i = 0; i < this.domList.length; i++) {
+        let dom = this.domList[i];
+        let item = this.itemList[dom.idx];
+
+        let delta = (item.style.offsetHeight + item.style.offsetTop)
+          + this.listWrapperElInitTop
+          - val.prev;
+
+        if (delta < 0) {
+          dom.isInViewport = false;
+        } else if(delta >= this.viewportHeight) {
+          dom.isInViewport = false;
+        } else {
+          dom.isInViewport = true;
+        }
+      }
+
+      this.insertIfNeeded();
+    });
+  }
+
+  _onScroll() {
+    this.scrollEvent$.next('scroll');
+  }
+
+  onScroll()  {
+    window.addEventListener('scroll',  this._onScroll.bind(this));
+  }
+
+  destroy() {
+    window.removeEventListener('scroll', this._onScroll);
+    this.scrollEvent$.complete();
+  }
+
+  getItem() {
+    if (this.itemList.length === 0) {
+      return null;
+    }
+
+    if (this.direction === UP) {
+      let headDom = this.domList[0];
+
+      if (headDom.idx > 0) {
+        return [this.itemList[headDom.idx - 1], headDom.idx - 1];
+      } else {
+        return null;
+      }
+    } else {
+      let tailDom = this.domList[this.domList.length - 1];
+      if (tailDom.idx + 1 < this.itemList.length) {
+        return [this.itemList[tailDom.idx + 1], tailDom.idx + 1];
+      } else {
+        return null;
+      }
+    }
+  }
+
+  firstRender() {
+    if (!this.itemList.length) {
+      return null;
+    }
+
+    let needMoreItems = this.needMoreItems; // add more items to make browser has scroll bar
+
+    let i;
+    for (i = 0; i < this.itemList.length; i++) {
+      let item = this.itemList[i];
+
+      if (this.viewportHeight > (this.innerElHeight + this.listWrapperElInitTop)) {
+        this.createDomAndInsert(item, i);
+      } else if (needMoreItems > 0) {
+        needMoreItems--;
+        this.createDomAndInsert(item, i);
+      } else {
+        break;
+      }
+    }
+
+    console.log('fist render', this.domList)
   }
 
   getUnusedDom() {
-    let unusedDomInAbove = -1;
-    let unusedDomInBottom = -1;
+    let unusedDomInAbove = 0;
+    let unusedDomInBottom = 0;
     let which = 0;
 
     for (let idx = 0; idx < this.domList.length; idx++) {
@@ -120,9 +233,27 @@ class Scroller {
       }
     }
     console.log(this.domList.length, this.direction, unusedDomInAbove, unusedDomInBottom)
+    let reservedItems = this.reservedItems;
+
     if (this.direction === UP) {
-      if (unusedDomInBottom < 3) {
-        if (unusedDomInAbove > 3) {
+      if (unusedDomInAbove < reservedItems) {
+        if (unusedDomInBottom > reservedItems) {
+          let dom =  this.domList.pop();
+          this.domList.unshift(dom);
+          return dom;
+        } else {
+          let el = createHistoryItemDom({});
+          let dom = new HistoryDOM(el, -1);
+          this.domList.unshift(dom);
+          this.listWrapperEl.appendChild(el);
+          return dom;
+        }
+      } else {
+        return null;
+      }
+    } else if (this.direction === DOWN) {
+      if (unusedDomInBottom < reservedItems) {
+        if (unusedDomInAbove > reservedItems) {
           let dom =  this.domList.shift();
           this.domList.push(dom);
           return dom;
@@ -136,72 +267,53 @@ class Scroller {
       } else {
         return null;
       }
-    } else if (this.direction === DOWN) {
-      if (unusedDomInAbove < 3) {
-        if (unusedDomInBottom > 3) {
-          let dom =  this.domList.pop();
-          this.domList.unshift(dom);
-          return dom;
-        } else {
-          let el = createHistoryItemDom({});
-          let dom = new HistoryDOM(el, -1);
-          this.domList.unshift(dom);
-          this.listWrapperEl.appendChild(el);
-          return dom;
-        }
-      }
     } else {
       return null;
     }
   }
 
-  insert(data) {
+  createDomAndInsert(item, idx) {
     // creat dom and insert it to list wrapper
-    let el = createHistoryItemDom(data);
-    let dom = new HistoryDOM(el, data.lastVisitTime);
+    let el = createHistoryItemDom(item);
+    let dom = new HistoryDOM(el, idx);
     this.domList.push(dom);
     this.listWrapperEl.appendChild(el);
-    this.adjustStyle(dom, data);
+    this.adjustStyle(dom, item);
     dom.show();
   }
 
-  insertIfNeeded(data) {
-    let nani = {
-      id: "17",
-      lastVisitTime: 1580456049269.886,
-      lastVisitTimeText: 'secret time',
-      title: "better history -- nani",
-      typedCount: 2,
-      url: "chrome-extension://abcd/index.html#/history-management",
-      visitCount: 224,
-    };
+  insertIfNeeded() {
+    let data = this.getItem();
 
-    let dom = this.getUnusedDom();
+    if (data) {
+      let dom = this.getUnusedDom();
 
-    if (dom) {
-      dom.id = data.lastVisitTime;
-      this.render(dom, nani);
-      this.adjustStyle(dom, nani);
-      dom.show();
+      if (dom) {
+        let [item, idx] = data;
+        dom.idx = idx;
+        this.renderItem(dom, item);
+        this.adjustStyle(dom, item);
+        dom.show();
+      }
     }
   }
 
-  render(historyDom, data) {
+  renderItem(historyDom, item) {
     historyDom.hide();
-    historyDom.el.querySelector('.col-url').textContent = data.url;
-    historyDom.el.querySelector('.col-title').textContent = data.title;
-    historyDom.el.querySelector('.col-last-visit-time-text').textContent = data.lastVisitTimeText;
-    historyDom.el.querySelector('.col-transition').textContent = data.transition;
+    historyDom.el.querySelector('.col-url').textContent = item.url;
+    historyDom.el.querySelector('.col-title').textContent = item.title;
+    historyDom.el.querySelector('.col-last-visit-time-text').textContent = item.lastVisitTimeText;
+    historyDom.el.querySelector('.col-transition').textContent = item.transition;
   }
 
-  adjustStyle(historyDom, data) {
+  adjustStyle(historyDom, item) {
     // we dont need to check both offsetHeight and translateY equal null
-    if (historyDom.style.offsetHeight === -1) {
-      historyDom.style.offsetHeight = historyDom.el.offsetHeight;
-      historyDom.style.offsetTop = this.innerElHeight;
-      historyDom.style.translateY = `translateY(${this.innerElHeight}px)`;
+    if (item.style.offsetHeight === -1) {
+      item.style.offsetHeight = historyDom.el.offsetHeight;
+      item.style.offsetTop = this.innerElHeight;
+      item.style.translateY = `translateY(${this.innerElHeight}px)`;
 
-      this.innerElHeight += historyDom.style.offsetHeight;
+      this.innerElHeight += item.style.offsetHeight;
 
       if ((this.innerElHeight + this.scrollTop) > this.viewportHeight) {
         historyDom.isInViewport = false;
@@ -212,7 +324,7 @@ class Scroller {
       this.innerEl.style.height = `${this.innerElHeight}px`;
     }
 
-    historyDom.el.style.transform = historyDom.style.translateY;
+    historyDom.el.style.transform = item.style.translateY;
   }
 }
 
@@ -221,82 +333,18 @@ export default {
   // components: {DelBtn},
   props: ['pageVisitItems'],
   mounted() {
-    if ('scrollRestoration' in history) {
-      // Back off, browser, I got this...
-      history.scrollRestoration = 'manual';
-    }
-
     this.scroller = new Scroller();
 
     this.scroller.init(this.$refs.parentEl);
 
     this.subject$.subscribe( (itemList) => {
-      let needMoreItems = 4; // add more items to make browser has scroll bar
-
-      for (let i = 0; i < itemList.length; i++) {
-        let item = itemList[i];
-        // item.style = {
-        //   offsetTop: null,
-        //   offsetHeight: null,
-        //   translateY: null,
-        // };
-
-        if (this.scroller.viewportHeight > (this.scroller.innerElHeight + this.scroller.listWrapperElInitTop)) {
-          this.scroller.insert(item);
-        } else if (needMoreItems > 0) {
-          needMoreItems--;
-          this.scroller.insert(item);
-        }
-      }
-
-      console.log('init dom', this.scroller.domList)
+      this.scroller.setData(itemList);
+      this.scroller.firstRender();
     });
-
-    this.scroller.scrollEvent$.pipe(
-      throttleTime(30),
-      map(function () {
-        return document.documentElement.scrollTop;
-      }),
-      scan(function (acc, curr) {
-        acc.direction = curr > acc.prev ? UP: DOWN;
-        acc.prev = curr;
-
-        return acc;
-      }, {
-        prev: 0,
-        direction: -1,
-      })
-    ).subscribe( (val) => {
-      this.scroller.direction = val.direction;
-      this.scroller.scrollTop = val.prev;
-
-      for (let i = 0; i< this.scroller.domList.length; i++) {
-        let dom = this.scroller.domList[i];
-        let delta = (dom.style.offsetHeight + dom.style.offsetTop)
-          + this.scroller.listWrapperElInitTop
-          - val.prev - 50;
-
-        if (delta < 0) {
-          dom.isInViewport = false;
-        } else if(delta >= this.scroller.viewportHeight) {
-          dom.isInViewport = false;
-        } else {
-          dom.isInViewport = true;
-        }
-      }
-
-      this.scroller.insertIfNeeded({});
-    });
-
-    this.onScroll = () => {
-      this.scroller.scrollEvent$.next('scroll');
-    };
-
-    window.addEventListener('scroll',  this.onScroll);
   },
   beforeDestroy() {
+    this.scroller.destroy();
     this.subject$.complete();
-    window.removeEventListener('scroll', this.onScroll);
   },
   created() {
     this.subject$ = new BehaviorSubject([]);

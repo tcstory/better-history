@@ -55,7 +55,10 @@ class HistoryDOM {
   constructor(el, idx) {
     this.el = el;
     this.idx = idx;
-    this.isInViewport = false;
+    this.isInViewport = {
+      value: false,
+      position: null,
+    };
   }
 
   show() {
@@ -114,7 +117,7 @@ class Scroller {
 
   listenToScroll() {
     this.scrollEvent$.pipe(
-      throttleTime(30),
+      // throttleTime(30),
       map(function () {
         return document.documentElement.scrollTop;
       }),
@@ -128,8 +131,13 @@ class Scroller {
         direction: -1,
       })
     ).subscribe( (val) => {
+      console.log('listenToScroll')
       this.direction = val.direction;
       this.scrollTop = val.prev;
+
+      let domInTop = 0;
+      let domInBottom = 0;
+      let domInViewport = 0;
 
       for (let i = 0; i < this.domList.length; i++) {
         let dom = this.domList[i];
@@ -140,20 +148,33 @@ class Scroller {
           - val.prev;
 
         if (delta < 0) {
-          dom.isInViewport = false;
+          dom.isInViewport = {
+            value: false,
+            position: 'top',
+          };
+          domInTop++;
         } else if(delta >= this.viewportHeight) {
-          dom.isInViewport = false;
+          dom.isInViewport = {
+            value: false,
+            position: 'bottom'
+          };
+          domInBottom++;
         } else {
-          dom.isInViewport = true;
+          dom.isInViewport = {
+            value: true,
+            position: '',
+          };
+          domInViewport++;
         }
       }
 
-      this.insertIfNeeded();
+      this.insertIfNeeded(domInTop, domInViewport, domInBottom);
     });
   }
 
   _onScroll() {
     this.scrollEvent$.next('scroll');
+    console.log('_onScroll');
   }
 
   onScroll()  {
@@ -212,7 +233,7 @@ class Scroller {
     console.log('fist render', this.domList)
   }
 
-  getUnusedDom() {
+  renderWithUnusedDoms() {
     let unusedDomInAbove = 0;
     let unusedDomInBottom = 0;
     let which = 0;
@@ -238,37 +259,94 @@ class Scroller {
     if (this.direction === UP) {
       if (unusedDomInAbove < reservedItems) {
         if (unusedDomInBottom > reservedItems) {
-          let dom =  this.domList.pop();
-          this.domList.unshift(dom);
-          return dom;
+          let diff =  unusedDomInBottom - reservedItems;
+
+          while (diff > 0) {
+            let data = this.getItem();
+
+            if (data) {
+              diff--;
+
+              let dom =  this.domList.pop();
+              this.domList.unshift(dom);
+
+              let [item, idx] = data;
+              dom.idx = idx;
+              this.renderItem(dom, item);
+              this.adjustStyle(dom, item);
+              dom.show();
+            } else {
+              break;
+            }
+          }
         } else {
-          let el = createHistoryItemDom({});
-          let dom = new HistoryDOM(el, -1);
-          this.domList.unshift(dom);
-          this.listWrapperEl.appendChild(el);
-          return dom;
+          let diff = unusedDomInBottom;
+
+          while (diff < reservedItems) {
+            let data = this.getItem();
+
+            if (data) {
+              diff++;
+
+              let [item, idx] = data;
+              let el = createHistoryItemDom(item);
+              let dom = new HistoryDOM(el, idx);
+              this.domList.unshift(dom);
+              this.listWrapperEl.appendChild(el);
+              this.adjustStyle(dom, item);
+              dom.show();
+            } else {
+              break;
+            }
+
+          }
         }
-      } else {
-        return null;
       }
     } else if (this.direction === DOWN) {
       if (unusedDomInBottom < reservedItems) {
         if (unusedDomInAbove > reservedItems) {
-          let dom =  this.domList.shift();
-          this.domList.push(dom);
-          return dom;
+          let diff = unusedDomInAbove - reservedItems;
+
+          while (diff > 0) {
+            let data = this.getItem();
+
+            if (data) {
+              diff--;
+
+              let dom =  this.domList.shift();
+              this.domList.push(dom);
+
+              let [item, idx] = data;
+              dom.idx = idx;
+              this.renderItem(dom, item);
+              this.adjustStyle(dom, item);
+              dom.show();
+            } else {
+              break;
+            }
+          }
         } else {
-          let el = createHistoryItemDom({});
-          let dom = new HistoryDOM(el, -1);
-          this.domList.push(dom);
-          this.listWrapperEl.appendChild(el);
-          return dom;
+          let diff = unusedDomInAbove;
+
+          while (diff < reservedItems) {
+            let data = this.getItem();
+
+            if (data) {
+              diff++;
+
+              let [item, idx] = data;
+              let el = createHistoryItemDom(item);
+              let dom = new HistoryDOM(el, idx);
+              this.domList.push(dom);
+              this.listWrapperEl.appendChild(el);
+              this.adjustStyle(dom, item);
+              dom.show();
+            }
+          }
         }
-      } else {
-        return null;
       }
     } else {
-      return null;
+      // nothing
     }
   }
 
@@ -282,18 +360,91 @@ class Scroller {
     dom.show();
   }
 
-  insertIfNeeded() {
-    let data = this.getItem();
+  insertIfNeeded(domInTop, domInViewport, domInBottom) {
+    // this.renderWithUnusedDoms();
+    console.log(this.domList.length, this.direction, domInTop, domInViewport, domInBottom);
 
-    if (data) {
-      let dom = this.getUnusedDom();
+    if (this.direction === UP) {
+      if (domInTop > this.reservedItems) {
+        // nothing
+        console.log('nothing');
+      } else {
+        let diff = domInBottom - this.reservedItems;
 
-      if (dom) {
-        let [item, idx] = data;
-        dom.idx = idx;
-        this.renderItem(dom, item);
-        this.adjustStyle(dom, item);
-        dom.show();
+        if (diff > 0) {
+          while (diff > 0) {
+            diff--;
+
+            let data = this.getItem();
+            console.log('getItem', data);
+            if (data) {
+              let dom =  this.domList.pop();
+              this.domList.unshift(dom);
+
+              let [item, idx] = data;
+              dom.idx = idx;
+              this.renderItem(dom, item);
+              this.adjustStyle(dom, item);
+              dom.show();
+            }
+          }
+        } else {
+          while (diff < 0) {
+            diff++;
+
+            let data = this.getItem();
+            if (data) {
+              let [item, idx] = data;
+              let el = createHistoryItemDom(item);
+              let dom = new HistoryDOM(el, idx);
+              this.domList.unshift(dom);
+              this.listWrapperEl.appendChild(el);
+              this.adjustStyle(dom, item);
+              dom.show();
+            }
+          }
+        }
+      }
+    } else {
+      if (domInBottom > this.reservedItems) {
+        // nothing
+      } else {
+        let diff = domInTop - this.reservedItems;
+
+        if (diff > 0) {
+          while (diff > 0) {
+            diff--;
+
+            let data = this.getItem();
+
+            if (data) {
+              let dom =  this.domList.shift();
+              this.domList.push(dom);
+
+              let [item, idx] = data;
+              dom.idx = idx;
+              this.renderItem(dom, item);
+              this.adjustStyle(dom, item);
+              dom.show();
+            }
+          }
+        } else {
+          while(diff < 0) {
+            diff++;
+
+            let data = this.getItem();
+
+            if (data) {
+              let [item, idx] = data;
+              let el = createHistoryItemDom(item);
+              let dom = new HistoryDOM(el, idx);
+              this.domList.push(dom);
+              this.listWrapperEl.appendChild(el);
+              this.adjustStyle(dom, item);
+              dom.show();
+            }
+          }
+        }
       }
     }
   }

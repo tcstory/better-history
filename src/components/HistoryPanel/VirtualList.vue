@@ -51,28 +51,9 @@ function createHistoryItemDom(item) {
   return (new DOMParser()).parseFromString(historyItemDomStr, 'text/html').body.firstChild;
 }
 
-class HistoryDOM {
-  constructor(el, idx) {
-    this.el = el;
-    this.idx = idx;
-    this.isInViewport = {
-      value: false,
-      position: null,
-    };
-  }
-
-  show() {
-    this.el.style.opacity = 1;
-  }
-
-  hide() {
-    this.el.style.opacity = 0;
-  }
-}
-
 class Scroller {
   constructor() {
-    this.viewportHeight= 0;
+    this.viewportHeight = 0;
     this.listWrapperEl= null;
     this.listWrapperElInitTop= 0;
     this.innerEl= null;
@@ -81,9 +62,10 @@ class Scroller {
     this.scrollEvent$= new Subject();
     this.direction = -1;
     this.scrollTop = 0;
-    this.itemList = [];
     this.reservedItems = 4;
     this.needMoreItems = this.reservedItems * 2;
+    this.itemList = [];
+    this.anchorItemIdx = -1;
   }
 
   init(listWrapperEl) {
@@ -93,12 +75,12 @@ class Scroller {
     }
 
     this.listWrapperEl = listWrapperEl;
-    this.listWrapperElInitTop = listWrapperEl.getBoundingClientRect().top;
-    this.viewportHeight = document.documentElement.clientHeight;
     this.innerEl = this.listWrapperEl.querySelector('.inner');
 
+    this.listWrapperElInitTop = listWrapperEl.getBoundingClientRect().top;
+    this.viewportHeight = document.documentElement.clientHeight;
+
     this.onScroll();
-    this.listenToScroll();
   }
 
   setData(itemList) {
@@ -115,14 +97,35 @@ class Scroller {
     });
   }
 
-  listenToScroll() {
+  _onScroll() {
+    this.scrollEvent$.next('scroll');
+  }
+
+  updateAnchorItem (delta, i) {
+    if (delta < 0) {
+      this.anchorItemIdx = -1;
+      return false;
+    } else {
+      if (this.anchorItemIdx === -1) {
+        this.anchorItemIdx = i;
+        return true;
+      } else {
+        // anchorItem is still the old one.
+        return true;
+      }
+    }
+  }
+
+  onScroll()  {
+    window.addEventListener('scroll',  this._onScroll.bind(this), {passive: true});
+
     this.scrollEvent$.pipe(
       // throttleTime(30),
       map(function () {
         return document.documentElement.scrollTop;
       }),
       scan(function (acc, curr) {
-        acc.direction = curr > acc.prev ? DOWN : UP;
+        acc.direction = curr > acc.prev ? UP : DOWN;
         acc.prev = curr;
 
         return acc;
@@ -131,54 +134,41 @@ class Scroller {
         direction: -1,
       })
     ).subscribe( (val) => {
-      console.log('listenToScroll')
       this.direction = val.direction;
       this.scrollTop = val.prev;
 
-      let domInTop = 0;
-      let domInBottom = 0;
-      let domInViewport = 0;
 
-      for (let i = 0; i < this.domList.length; i++) {
-        let dom = this.domList[i];
-        let item = this.itemList[dom.idx];
+      if (this.direction === UP) {
+        for (let i = this.anchorItemIdx; i < this.domList.length; i++) {
+          let item = this.itemList[i];
+          let delta = (item.style.offsetHeight + item.style.offsetTop)
+            + this.listWrapperElInitTop
+            - this.scrollTop;
 
-        let delta = (item.style.offsetHeight + item.style.offsetTop)
-          + this.listWrapperElInitTop
-          - val.prev;
+          let hasUpdated = this.updateAnchorItem(delta, i);
 
-        if (delta < 0) {
-          dom.isInViewport = {
-            value: false,
-            position: 'top',
-          };
-          domInTop++;
-        } else if(delta >= this.viewportHeight) {
-          dom.isInViewport = {
-            value: false,
-            position: 'bottom'
-          };
-          domInBottom++;
-        } else {
-          dom.isInViewport = {
-            value: true,
-            position: '',
-          };
-          domInViewport++;
+          if (hasUpdated) {
+            break;
+          }
+        }
+      } else {
+        for (let i = this.anchorItemIdx; i >= 0; i--) {
+          let item = this.itemList[i];
+          let delta = (item.style.offsetHeight + item.style.offsetTop)
+            + this.listWrapperElInitTop
+            - this.scrollTop;
+
+          let hasUpdated = this.updateAnchorItem(delta, i);
+
+          if (hasUpdated) {
+            break;
+          }
         }
       }
 
-      this.insertIfNeeded(domInTop, domInViewport, domInBottom);
+
+      this.insertIfNeeded();
     });
-  }
-
-  _onScroll() {
-    this.scrollEvent$.next('scroll');
-    console.log('_onScroll');
-  }
-
-  onScroll()  {
-    window.addEventListener('scroll',  this._onScroll.bind(this));
   }
 
   destroy() {
@@ -214,6 +204,7 @@ class Scroller {
       return null;
     }
 
+    this.anchorItemIdx = 0;
     let needMoreItems = this.needMoreItems; // add more items to make browser has scroll bar
 
     let i;
@@ -221,148 +212,26 @@ class Scroller {
       let item = this.itemList[i];
 
       if (this.viewportHeight > (this.innerElHeight + this.listWrapperElInitTop)) {
-        this.createDomAndInsert(item, i);
+        this.createDomAndInsert(item);
       } else if (needMoreItems > 0) {
         needMoreItems--;
-        this.createDomAndInsert(item, i);
+        this.createDomAndInsert(item);
       } else {
         break;
       }
     }
-
-    console.log('fist render', this.domList)
   }
 
-  renderWithUnusedDoms() {
-    let unusedDomInAbove = 0;
-    let unusedDomInBottom = 0;
-    let which = 0;
-
-    for (let idx = 0; idx < this.domList.length; idx++) {
-      let dom = this.domList[idx];
-
-      if (which === 0 && dom.isInViewport === false) {
-        unusedDomInAbove++;
-      }
-
-      if (which === 0 && dom.isInViewport === true) {
-        which = 1;
-      }
-
-      if (which === 1 && dom.isInViewport === false) {
-        unusedDomInBottom++;
-      }
-    }
-    console.log(this.domList.length, this.direction, unusedDomInAbove, unusedDomInBottom)
-    let reservedItems = this.reservedItems;
-
-    if (this.direction === UP) {
-      if (unusedDomInAbove < reservedItems) {
-        if (unusedDomInBottom > reservedItems) {
-          let diff =  unusedDomInBottom - reservedItems;
-
-          while (diff > 0) {
-            let data = this.getItem();
-
-            if (data) {
-              diff--;
-
-              let dom =  this.domList.pop();
-              this.domList.unshift(dom);
-
-              let [item, idx] = data;
-              dom.idx = idx;
-              this.renderItem(dom, item);
-              this.adjustStyle(dom, item);
-              dom.show();
-            } else {
-              break;
-            }
-          }
-        } else {
-          let diff = unusedDomInBottom;
-
-          while (diff < reservedItems) {
-            let data = this.getItem();
-
-            if (data) {
-              diff++;
-
-              let [item, idx] = data;
-              let el = createHistoryItemDom(item);
-              let dom = new HistoryDOM(el, idx);
-              this.domList.unshift(dom);
-              this.listWrapperEl.appendChild(el);
-              this.adjustStyle(dom, item);
-              dom.show();
-            } else {
-              break;
-            }
-
-          }
-        }
-      }
-    } else if (this.direction === DOWN) {
-      if (unusedDomInBottom < reservedItems) {
-        if (unusedDomInAbove > reservedItems) {
-          let diff = unusedDomInAbove - reservedItems;
-
-          while (diff > 0) {
-            let data = this.getItem();
-
-            if (data) {
-              diff--;
-
-              let dom =  this.domList.shift();
-              this.domList.push(dom);
-
-              let [item, idx] = data;
-              dom.idx = idx;
-              this.renderItem(dom, item);
-              this.adjustStyle(dom, item);
-              dom.show();
-            } else {
-              break;
-            }
-          }
-        } else {
-          let diff = unusedDomInAbove;
-
-          while (diff < reservedItems) {
-            let data = this.getItem();
-
-            if (data) {
-              diff++;
-
-              let [item, idx] = data;
-              let el = createHistoryItemDom(item);
-              let dom = new HistoryDOM(el, idx);
-              this.domList.push(dom);
-              this.listWrapperEl.appendChild(el);
-              this.adjustStyle(dom, item);
-              dom.show();
-            }
-          }
-        }
-      }
-    } else {
-      // nothing
-    }
-  }
-
-  createDomAndInsert(item, idx) {
-    // creat dom and insert it to list wrapper
-    let el = createHistoryItemDom(item);
-    let dom = new HistoryDOM(el, idx);
+  createDomAndInsert(item) {
+    let dom = createHistoryItemDom(item);
     this.domList.push(dom);
-    this.listWrapperEl.appendChild(el);
+    this.listWrapperEl.appendChild(dom);
     this.adjustStyle(dom, item);
-    dom.show();
   }
 
-  insertIfNeeded(domInTop, domInViewport, domInBottom) {
-    // this.renderWithUnusedDoms();
-    console.log(this.domList.length, this.direction, domInTop, domInViewport, domInBottom);
+  insertIfNeeded() {
+
+
 
     if (this.direction === UP) {
       if (domInTop > this.reservedItems) {
@@ -385,7 +254,6 @@ class Scroller {
               dom.idx = idx;
               this.renderItem(dom, item);
               this.adjustStyle(dom, item);
-              dom.show();
             }
           }
         } else {
@@ -400,7 +268,6 @@ class Scroller {
               this.domList.unshift(dom);
               this.listWrapperEl.appendChild(el);
               this.adjustStyle(dom, item);
-              dom.show();
             }
           }
         }
@@ -425,7 +292,6 @@ class Scroller {
               dom.idx = idx;
               this.renderItem(dom, item);
               this.adjustStyle(dom, item);
-              dom.show();
             }
           }
         } else {
@@ -441,7 +307,6 @@ class Scroller {
               this.domList.push(dom);
               this.listWrapperEl.appendChild(el);
               this.adjustStyle(dom, item);
-              dom.show();
             }
           }
         }
@@ -450,32 +315,26 @@ class Scroller {
   }
 
   renderItem(historyDom, item) {
-    historyDom.hide();
-    historyDom.el.querySelector('.col-url').textContent = item.url;
-    historyDom.el.querySelector('.col-title').textContent = item.title;
-    historyDom.el.querySelector('.col-last-visit-time-text').textContent = item.lastVisitTimeText;
-    historyDom.el.querySelector('.col-transition').textContent = item.transition;
+    historyDom.querySelector('.col-url').textContent = item.url;
+    historyDom.querySelector('.col-title').textContent = item.title;
+    historyDom.querySelector('.col-last-visit-time-text').textContent = item.lastVisitTimeText;
+    historyDom.querySelector('.col-transition').textContent = item.transition;
   }
 
   adjustStyle(historyDom, item) {
     // we dont need to check both offsetHeight and translateY equal null
     if (item.style.offsetHeight === -1) {
-      item.style.offsetHeight = historyDom.el.offsetHeight;
-      item.style.offsetTop = this.innerElHeight;
-      item.style.translateY = `translateY(${this.innerElHeight}px)`;
+      item.style = {
+        offsetHeight: historyDom.offsetHeight,
+        offsetTop: this.innerElHeight,
+        translateY: `translateY(${this.innerElHeight}px)`,
+      };
 
       this.innerElHeight += item.style.offsetHeight;
-
-      if ((this.innerElHeight + this.scrollTop) > this.viewportHeight) {
-        historyDom.isInViewport = false;
-      } else {
-        historyDom.isInViewport = true;
-      }
-
       this.innerEl.style.height = `${this.innerElHeight}px`;
     }
 
-    historyDom.el.style.transform = item.style.translateY;
+    historyDom.style.transform = item.style.translateY;
   }
 }
 

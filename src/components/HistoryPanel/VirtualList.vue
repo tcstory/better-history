@@ -13,11 +13,11 @@ import DelBtn from './DelBtn.vue';
 
 const UP = 1;
 const DOWN = 0;
+const UNSET = -1;
 
 function createHistoryItemDom(item) {
   let historyItemDomStr = `
       <div tabindex="0"
-           style="opacity: 0;"
            class="q-item q-item-type row no-wrap history-item q-item--clickable q-link cursor-pointer q-focusable q-hoverable">
         <div tabindex="-1" class="q-focus-helper"></div>
         <div class="q-item__section column q-item__section--main justify-center">
@@ -58,14 +58,15 @@ class Scroller {
     this.listWrapperElInitTop= 0;
     this.innerEl= null;
     this.innerElHeight= 0;
-    this.domList= [];
     this.scrollEvent$= new Subject();
     this.direction = -1;
     this.scrollTop = 0;
     this.reservedItems = 4;
     this.needMoreItems = this.reservedItems * 2;
+    this.unusedDom = [];
     this.itemList = [];
-    this.anchorItemIdx = -1;
+    this.anchorTopItemIdx = UNSET;
+    this.anchorBottomItemIdx = UNSET;
   }
 
   init(listWrapperEl) {
@@ -92,22 +93,37 @@ class Scroller {
           offsetTop: -1,
           offsetHeight: -1,
           translateY: -1,
-        }
+        },
+        dom: null,
       }
     });
   }
 
   _onScroll() {
     this.scrollEvent$.next('scroll');
+    // console.log('scroll me', Date.now())
   }
 
-  updateAnchorItem (delta, i) {
+  updateAnchorBottomItem() {
+    for (let i = this.anchorTopItemIdx + 1; i < this.itemList.length; i++) {
+      let delta = this.calculateDelta(this.itemList[i]);
+
+      if (delta > 0 && delta <= this.viewportHeight) {
+        this.anchorBottomItemIdx = UNSET;
+      } else {
+        this.anchorBottomItemIdx = i;
+        break;
+      }
+    }
+  }
+
+  updateAnchorTopItemFromTop (delta, i) {
     if (delta < 0) {
-      this.anchorItemIdx = -1;
+      this.anchorTopItemIdx = UNSET;
       return false;
     } else {
-      if (this.anchorItemIdx === -1) {
-        this.anchorItemIdx = i;
+      if (this.anchorTopItemIdx === UNSET) {
+        this.anchorTopItemIdx = i;
         return true;
       } else {
         // anchorItem is still the old one.
@@ -116,11 +132,37 @@ class Scroller {
     }
   }
 
+  updateAnchorTopItemFromBottom(delta, i) {
+    if (i === 0) {
+      this.anchorTopItemIdx = 0;
+      return true;
+    }
+
+    if (delta < 0) {
+      if (this.anchorTopItemIdx === UNSET) {
+        this.anchorTopItemIdx = i + 1;
+        return true;
+      } else {
+        // anchorItem is still the old one.
+        return true;
+      }
+    } else {
+      this.anchorTopItemIdx = UNSET;
+      return false;
+    }
+  }
+
+  calculateDelta(item) {
+    return item.style.offsetHeight + item.style.offsetTop
+      + this.listWrapperElInitTop
+      - this.scrollTop;
+  }
+
   onScroll()  {
     window.addEventListener('scroll',  this._onScroll.bind(this), {passive: true});
 
     this.scrollEvent$.pipe(
-      // throttleTime(30),
+      throttleTime(20),
       map(function () {
         return document.documentElement.scrollTop;
       }),
@@ -137,28 +179,23 @@ class Scroller {
       this.direction = val.direction;
       this.scrollTop = val.prev;
 
-
       if (this.direction === UP) {
-        for (let i = this.anchorItemIdx; i < this.domList.length; i++) {
+        for (let i = this.anchorTopItemIdx; i < this.itemList.length; i++) {
           let item = this.itemList[i];
-          let delta = (item.style.offsetHeight + item.style.offsetTop)
-            + this.listWrapperElInitTop
-            - this.scrollTop;
+          let delta = this.calculateDelta(item);
 
-          let hasUpdated = this.updateAnchorItem(delta, i);
+          let hasUpdated = this.updateAnchorTopItemFromTop(delta, i);
 
           if (hasUpdated) {
             break;
           }
         }
       } else {
-        for (let i = this.anchorItemIdx; i >= 0; i--) {
+        for (let i = this.anchorTopItemIdx; i >= 0; i--) {
           let item = this.itemList[i];
-          let delta = (item.style.offsetHeight + item.style.offsetTop)
-            + this.listWrapperElInitTop
-            - this.scrollTop;
+          let delta = this.calculateDelta(item);
 
-          let hasUpdated = this.updateAnchorItem(delta, i);
+          let hasUpdated = this.updateAnchorTopItemFromBottom(delta, i);
 
           if (hasUpdated) {
             break;
@@ -166,7 +203,7 @@ class Scroller {
         }
       }
 
-
+      this.updateAnchorBottomItem();
       this.insertIfNeeded();
     });
   }
@@ -176,39 +213,15 @@ class Scroller {
     this.scrollEvent$.complete();
   }
 
-  getItem() {
-    if (this.itemList.length === 0) {
-      return null;
-    }
-
-    if (this.direction === UP) {
-      let headDom = this.domList[0];
-
-      if (headDom.idx > 0) {
-        return [this.itemList[headDom.idx - 1], headDom.idx - 1];
-      } else {
-        return null;
-      }
-    } else {
-      let tailDom = this.domList[this.domList.length - 1];
-      if (tailDom.idx + 1 < this.itemList.length) {
-        return [this.itemList[tailDom.idx + 1], tailDom.idx + 1];
-      } else {
-        return null;
-      }
-    }
-  }
-
   firstRender() {
     if (!this.itemList.length) {
       return null;
     }
 
-    this.anchorItemIdx = 0;
+    this.anchorTopItemIdx = 0;
     let needMoreItems = this.needMoreItems; // add more items to make browser has scroll bar
 
-    let i;
-    for (i = 0; i < this.itemList.length; i++) {
+    for (let i = 0; i < this.itemList.length; i++) {
       let item = this.itemList[i];
 
       if (this.viewportHeight > (this.innerElHeight + this.listWrapperElInitTop)) {
@@ -224,94 +237,108 @@ class Scroller {
 
   createDomAndInsert(item) {
     let dom = createHistoryItemDom(item);
-    this.domList.push(dom);
+    item.dom = dom;
     this.listWrapperEl.appendChild(dom);
     this.adjustStyle(dom, item);
   }
 
   insertIfNeeded() {
+    // console.log('insertIfNeeded', this.anchorTopItemIdx, this.anchorBottomItemIdx);
 
+    this.recycleDom();
 
+    let startIdx = this.anchorTopItemIdx - this.reservedItems;
+
+    if (startIdx < 0) {
+      startIdx = 0;
+    }
+
+    let endIdx = this.anchorBottomItemIdx + this.reservedItems;
+
+    if (endIdx > (this.itemList.length - 1)) {
+      endIdx = this.itemList.length - 1;
+    }
+
+    // console.log('startIdx, endIdx', startIdx, endIdx);
+    while(startIdx <= endIdx) {
+      let item = this.itemList[startIdx];
+
+      if (item.dom === null) {
+        let dom = this.getUnusedDom();
+
+        if (dom === null) {
+          // console.log('=============>>>> need more dom', startIdx)
+          let dom = createHistoryItemDom(item);
+          item.dom = dom;
+          this.listWrapperEl.appendChild(dom);
+          this.adjustStyle(dom, item);
+        } else {
+          item.dom = dom;
+          this.renderItem(dom, item);
+          this.adjustStyle(dom, item);
+        }
+      } else {
+        // nothing
+      }
+
+      startIdx++;
+    }
+
+  }
+
+  getUnusedDom() {
+    if (this.unusedDom.length > 0) {
+      let idx = this.unusedDom.shift();
+      let item = this.itemList[idx];
+      let dom = item.dom;
+      item.dom = null;
+
+      return dom;
+    } else {
+      return null;
+    }
+  }
+
+  recycleDom() {
+    let topIdx = this.anchorTopItemIdx - this.reservedItems - 1;
+    let bottomIdx = this.anchorBottomItemIdx + this.reservedItems + 1;
 
     if (this.direction === UP) {
-      if (domInTop > this.reservedItems) {
-        // nothing
-        console.log('nothing');
-      } else {
-        let diff = domInBottom - this.reservedItems;
+      let unusedDom = [];
 
-        if (diff > 0) {
-          while (diff > 0) {
-            diff--;
-
-            let data = this.getItem();
-            console.log('getItem', data);
-            if (data) {
-              let dom =  this.domList.pop();
-              this.domList.unshift(dom);
-
-              let [item, idx] = data;
-              dom.idx = idx;
-              this.renderItem(dom, item);
-              this.adjustStyle(dom, item);
-            }
+      while (topIdx >= 0) {
+        if (this.itemList[topIdx].dom === null) {
+          if (this.itemList[this.anchorTopItemIdx].dom !== null) {
+            break;
           }
         } else {
-          while (diff < 0) {
-            diff++;
-
-            let data = this.getItem();
-            if (data) {
-              let [item, idx] = data;
-              let el = createHistoryItemDom(item);
-              let dom = new HistoryDOM(el, idx);
-              this.domList.unshift(dom);
-              this.listWrapperEl.appendChild(el);
-              this.adjustStyle(dom, item);
-            }
-          }
+          unusedDom.push(topIdx);
         }
+        topIdx--;
       }
-    } else {
-      if (domInBottom > this.reservedItems) {
-        // nothing
-      } else {
-        let diff = domInTop - this.reservedItems;
 
-        if (diff > 0) {
-          while (diff > 0) {
-            diff--;
-
-            let data = this.getItem();
-
-            if (data) {
-              let dom =  this.domList.shift();
-              this.domList.push(dom);
-
-              let [item, idx] = data;
-              dom.idx = idx;
-              this.renderItem(dom, item);
-              this.adjustStyle(dom, item);
-            }
-          }
-        } else {
-          while(diff < 0) {
-            diff++;
-
-            let data = this.getItem();
-
-            if (data) {
-              let [item, idx] = data;
-              let el = createHistoryItemDom(item);
-              let dom = new HistoryDOM(el, idx);
-              this.domList.push(dom);
-              this.listWrapperEl.appendChild(el);
-              this.adjustStyle(dom, item);
-            }
-          }
-        }
-      }
+      this.unusedDom = [...new Set(this.unusedDom.concat(unusedDom))];
     }
+
+    if (this.direction === DOWN) {
+      let unusedDom = [];
+
+      while (bottomIdx < this.itemList.length) {
+        if (this.itemList[bottomIdx].dom === null) {
+          if (this.itemList[this.anchorTopItemIdx].dom !== null) {
+            break;
+          }
+        } else {
+          unusedDom.push(bottomIdx);
+        }
+        bottomIdx++;
+      }
+
+      this.unusedDom = [...new Set(this.unusedDom.concat(unusedDom))];
+    }
+
+    // console.log(this.anchorTopItemIdx, this.anchorBottomItemIdx);
+    // console.log('recycleDom', this.direction, this.unusedDom);
   }
 
   renderItem(historyDom, item) {
@@ -324,11 +351,9 @@ class Scroller {
   adjustStyle(historyDom, item) {
     // we dont need to check both offsetHeight and translateY equal null
     if (item.style.offsetHeight === -1) {
-      item.style = {
-        offsetHeight: historyDom.offsetHeight,
-        offsetTop: this.innerElHeight,
-        translateY: `translateY(${this.innerElHeight}px)`,
-      };
+      item.style.offsetHeight = historyDom.offsetHeight;
+      item.style.offsetTop = this.innerElHeight;
+      item.style.translateY = `translateY(${this.innerElHeight}px)`;
 
       this.innerElHeight += item.style.offsetHeight;
       this.innerEl.style.height = `${this.innerElHeight}px`;
@@ -385,6 +410,7 @@ export default {
   .wrapper {
     position: relative;
     width: 100%;
+    contain: layout style;
   }
 
   .list-wrapper {
@@ -404,7 +430,7 @@ export default {
     top: 0;
     width: 100%;
 
-    contain: layout;
+    contain: layout paint;
     will-change: transform;
   }
 
